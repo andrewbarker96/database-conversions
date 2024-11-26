@@ -1,0 +1,5 @@
+*.env
+
+/node_modules
+/stockassoc-adminsdk.json
+/data.json
