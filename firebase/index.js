@@ -5,6 +5,7 @@ import { createClient } from "@supabase/supabase-js";
 import { config } from "dotenv";
 import fs from "fs";
 import { exit } from "process";
+import { combineDateTime } from "./functions/combineDateTime.js";
 
 // Load environment variables for Supabase
 config();
@@ -31,18 +32,58 @@ const supabaseKey = process.env.SUPABASE_KEY;
 
 // Initialize Supabase client
 const supabase = createClient(supabaseUrl, supabaseKey);
- 
+
 async function fetchFirebaseData() {
   try {
     let allData = [];
+
+    const columnMapping = {
+      id: "uid",
+      firstName: "first_name",
+      lastName: "last_name",
+      date: "date",
+      signInTime: "sign_in_time",
+      signOutTime: "sign_out_time",
+    };
 
     // Fetch data from Firebase Firestore
     const querySnapshot = await getDocs(collection(db, "guests"));
     querySnapshot.forEach((doc) => {
       const firebaseData = doc.data();
       firebaseData.id = doc.id; // Add document ID to the data
-      allData.push(firebaseData);
+
+      // Transform data based on columnMapping
+      const transformedData = {};
+      for (const [key, value] of Object.entries(firebaseData)) {
+        const newKey = columnMapping[key] || key;
+        transformedData[newKey] = value;
+      }
+
+      // Add full_name column by combining first_name and last_name
+      transformedData.full_name = `${transformedData.first_name || ""} ${
+        transformedData.last_name || ""
+      }`.trim();
+
+      // Combine date and time fields for sign_in and sign_out
+      transformedData.sign_in = combineDateTime(
+        transformedData.date,
+        transformedData.sign_in_time
+      );
+      transformedData.sign_out = combineDateTime(
+        transformedData.date,
+        transformedData.sign_out_time
+      );
+
+      // Remove individual date and time fields
+      delete transformedData.date;
+      delete transformedData.sign_in_time;
+      delete transformedData.sign_out_time;
+
+      allData.push(transformedData);
     });
+
+    // Sort allData by sign_in in descending order
+    allData.sort((a, b) => new Date(b.sign_in) - new Date(a.sign_in));
 
     // Convert the fetched data to JSON and write to file
     const jsonData = JSON.stringify(allData, null, 2);
@@ -61,8 +102,8 @@ async function dataToSupabase(data) {
   try {
     // Insert or update data into Supabase
     const { data: visitors, error } = await supabase
-      .from("signin_app_visitors")
-      .upsert(data, { onConflict: ["id"] });
+      .from("office_visitors")
+      .upsert(data, { onConflict: ["uid"] });
     if (error) {
       console.error("Error upserting data to Supabase:", error);
     } else {

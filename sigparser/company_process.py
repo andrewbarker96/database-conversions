@@ -15,7 +15,7 @@ class CompanyConverter:
 
         # Creating Supabase Client
         self.supabase_url: str = os.getenv('SUPABASE_URL')
-        self.supabase_key: str = os.getenv('SUPABASE_KEY')
+        self.supabase_key: str = os.getenv('SERVICE_ROLE_KEY')
         self.supabase: Client = create_client(self.supabase_url, self.supabase_key)
 
     def format_no_company(self, company):
@@ -97,40 +97,56 @@ class CompanyConverter:
         except json.JSONDecodeError as e:
             print(f"Error: Unable to load records from {self.json_file}. {e}")
             return False
-        
+
         new_companies = []
         updates = []
 
-        # Upsert company data to avoid duplicates and ensure unique entries
+        # Separate records into new companies and updates
         for company in json_data:
             uid = company.get('uid')
-            
-            if uid:
-                updates.append(company)
-            else:
-                new_companies.append(company)
-        
-        # Batch upload companies to Supabase
+            sigparser_check = company.get('allow_sigparser')
+
+            if sigparser_check:
+                company_exists = (
+                    self.supabase.table('companies').select('uid').eq('uid', uid).execute().data or
+                    self.supabase.table('deleted_companies').select('uid').eq('uid', uid).execute().data
+                )
+                
+                if company_exists:
+                    updates.append(company)
+                else:
+                    new_companies.append(company)
+
+
+        # Batch process updates
         batch_size = 500
         for i in range(0, len(updates), batch_size):
-            batch_data = json_data[i:i + batch_size]
+            batch_data = updates[i:i + batch_size]
             try:
-                self.supabase.table('companies').upsert(batch_data).execute()
-                print(f"Uploaded {len(batch_data)} records")
+                # Upsert to both tables, based on existence
+                for company in batch_data:
+                    uid = company['uid']
+                    # Determine the table where the update should occur
+                    if self.supabase.table('companies').select('uid').eq('uid', uid).execute().data:
+                        self.supabase.table('companies').upsert(company).execute()
+                    else:
+                        self.supabase.table('deleted_companies').upsert(company).execute()
+                print(f"Updated {len(batch_data)} records")
             except Exception as e:
-                print(f"Error: Unable to upload records. {e}")
+                print(f"Error: Unable to update records. {e}")
                 return False
-            
+
+        # Batch insert new companies into `companies` table
         for i in range(0, len(new_companies), batch_size):
             batch_data = new_companies[i:i + batch_size]
             try:
                 self.supabase.table('companies').insert(batch_data).execute()
-                print(f"Inserted {len(batch_data)} records")
+                print(f"Inserted {len(batch_data)} new records")
             except Exception as e:
-                print(f"Error: Unable to insert records. {e}")
+                print(f"Error: Unable to insert new records. {e}")
                 return False
 
-        print(f"Uploaded {len(json_data)} records to the database\nProcess Completed Successfully")
+        print(f"Processed {len(json_data)} records successfully")
         os.remove(self.json_file)
         return True
 

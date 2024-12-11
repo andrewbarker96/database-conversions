@@ -18,7 +18,7 @@ class ContactConverter:
 
         # Creating Supabase Client
         self.supabase_url: str = os.getenv('SUPABASE_URL')
-        self.supabase_key: str = os.getenv('SUPABASE_KEY')
+        self.supabase_key: str = os.getenv('SERVICE_ROLE_KEY')
         self.supabase: Client = create_client(self.supabase_url, self.supabase_key)
 
     # Format Phone Numbers to be XXXYYYZZZZ format
@@ -181,6 +181,7 @@ class ContactConverter:
             "Fax Phone": "fax",
             "SigParser Contact ID": "uid",
             "Interaction Status": "interaction_status",
+            "Latest Interaction": "latest_interaction",
             "Contact Status": "contact_status",
             "Date Last Updated (Details)": "last_updated",
             "Total Emails" : "total_emails",
@@ -188,7 +189,7 @@ class ContactConverter:
         }, inplace=True)      
 
         filtered_columns = ['uid', 'prefix', 'first_name', 'middle_name', 'last_name', 'suffix', 'full_name', 'title', 'company', 'email', 'address', 
-                            'home_phone', 'office_phone', 'direct_phone', 'mobile_phone', 'contact_status', 'interaction_status', 'fax', 'last_updated']
+                            'home_phone', 'office_phone', 'direct_phone', 'mobile_phone', 'contact_status', 'interaction_status', 'latest_interaction', 'fax', 'last_updated']
         filtered_data = data[filtered_columns]
         filtered_data = filtered_data.fillna('')
 
@@ -230,14 +231,19 @@ class ContactConverter:
         
         for record in json_data:
             uid = record.get('uid')
-            sigparser_check = record.get('sigparser_check')
-
-            # Separate records into updates and new entries
-            if uid:
-                if sigparser_check:  # Only update if sigparser_check is True
+            sigparser_check = record.get('allow')
+            
+            if sigparser_check:  # Only update if sigparser_check is True
+                contact_exists = (
+                    self.supabase.table('contacts').select('uid').eq('uid', uid).execute().data or
+                    self.supabase.table('deleted_contacts').select('uid').eq('uid', uid).execute().data
+                )
+                
+                if contact_exists:
                     updates.append(record)
-            else:
-                new_records.append(record)
+                else:
+                    new_records.append(record)
+
 
         # Batch update and insert
         batch_size = 500
