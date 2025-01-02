@@ -5,6 +5,7 @@ import customtkinter as ctk
 from tkinter import filedialog
 from contact_process import ContactConverter
 from company_process import CompanyConverter
+from jobList_process import ProjectListConverter
 import threading
 import time
 
@@ -56,10 +57,10 @@ class Header(ctk.CTkLabel):
         super().__init__(master, **kwargs)
         
         # Header of Application
-        self.header = ctk.CTkLabel(self, text="Stock & Associates\nSigparser to Supabase Conversion Application", font=("Aptos", 18))
+        self.header = ctk.CTkLabel(self, text="Stock & Associates\nCMS Data Conversion Application", font=("Aptos", 18))
         self.header.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
                 
-        self.text = ctk.CTkLabel(self, wraplength=500, text="Welcome to the Stock & Associates Contact Management Application.\nPlease upload the SigParser file to update the Database.", font=("Aptos", 14))
+        self.text = ctk.CTkLabel(self, wraplength=500, text="Welcome to the Stock & Associates CMS Data Management Application.\nPlease upload a file to update the Database.", font=("Aptos", 14))
         self.text.grid(row=1, column=0, padx=10, pady=10, sticky="ew")
 
 
@@ -92,7 +93,7 @@ class Body(ctk.CTkLabel):
                 print('Processing Contact Data...')
                 contact_converter = ContactConverter(csv_file=file_path, json_file='StockContacts.json')
                 contact_converter.run()  # Run the conversion process
-                message = 'Contacts updated processed successfully'
+                message = 'Contacts processed successfully'
                 print(message)
                 self.after(1000, self.popover.message(message)) 
             except Exception as e:
@@ -109,8 +110,19 @@ class Body(ctk.CTkLabel):
             except Exception as e:
                 message = f'Error: {e}'
                 print(message)
+                return message           
+        
+        if '.docx' in file_path:
+            try:
+                project_list_converter = ProjectListConverter(docx_file=file_path, csv_file='projectList.csv', json_file='projectList.json')
+                project_list_converter.run()
+                message= 'Project List converted successfully'
+                print(message)
+                self.after(1000, self.popover.message(message))
+            except Exception as e:
+                message = f'Error: {e}'
+                print(message)
                 return message            
-            
     
     def on_close(self):
         self.quit()
