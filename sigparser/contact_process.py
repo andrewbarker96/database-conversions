@@ -130,7 +130,7 @@ class ContactConverter:
 
 
         # Exclude bot emails from the relevant column (assuming it's 'Email Address')
-        bot_keywords = ['reply', 'noreply', 'invoices', 'support', 'do-not-reply', 'donotreply']
+        bot_keywords = ['reply', 'noreply', 'invoices', 'support', 'do-not-reply', 'donotreply', 'bids', 'billing', 'vendor']
         data = data[~data['Email Address'].str.lower().str.contains('|'.join(bot_keywords), na=False)]
 
         filtered_count = len(data)
@@ -192,7 +192,7 @@ class ContactConverter:
                             'home_phone', 'office_phone', 'direct_phone', 'mobile_phone', 'contact_status', 'interaction_status', 'latest_interaction', 'fax', 'last_updated']
         filtered_data = data[filtered_columns]
         filtered_data = filtered_data.fillna('')
-
+        print(filtered_data)
         return filtered_data
 
     # Save to JSON
@@ -215,6 +215,9 @@ class ContactConverter:
 
     # Upload data to Supabase
     def upload_to_supabase(self):
+        # Batch size for querying/updating data
+        batch_size = 500
+        
         try:
             with open(self.json_file, 'r', encoding='utf-8') as f:
                 json_data = json.load(f)
@@ -225,48 +228,95 @@ class ContactConverter:
         except json.JSONDecodeError as e:
             print(f"Error: Unable to load records from {self.json_file}. {e}")
             return False
+        
+        uids = [record.get('uid') for record in json_data if record.get('uid')]
+        
+        contacts_uids = set()
+        deleted_contacts_uids = set()
 
+        for i in range(0, len(uids), batch_size):
+            batch_uids = uids[i:i + batch_size]
+            
+            # Query contacts table for batch
+            contacts_result = (
+                self.supabase.table('contacts')
+                .select('uid')
+                .in_('uid', batch_uids)
+                .eq('allow_sigparser', True)
+                .execute()
+                .data
+            )
+            if contacts_result:
+                contacts_uids.update(contact['uid'] for contact in contacts_result)
+
+            # Query deleted_contacts table for batch
+            deleted_contacts_result = (
+                self.supabase.table('deleted_contacts')
+                .select('uid')
+                .in_('uid', batch_uids)
+                .eq('allow_sigparser', True)
+                .execute()
+                .data
+            )
+            if deleted_contacts_result:
+                deleted_contacts_uids.update(contact['uid'] for contact in deleted_contacts_result)
+
+        # Separate new records and updates
         new_records = []
         updates = []
-        
+        deleted_updates = []
+
         for record in json_data:
             uid = record.get('uid')
-            sigparser_check = record.get('allow')
+            if uid in contacts_uids:
+                updates.append(record)
+            elif uid in deleted_contacts_uids:
+                deleted_updates.append(record)
+            else:
+                new_records.append(record)
+
+        # Print the results
+        print(f'New Contacts Found: {len(new_records)}')
+        print(f'Potential Updates to contacts: {len(updates)}')
+        print(f'Potential Updates to deleted_contacts: {len(deleted_updates)}')
+
+        # for i in range(0, len(updates), batch_size):
+        #     batch_data = updates[i:i + batch_size]
+        #     try:
+        #         self.supabase.table('contacts').upsert(batch_data).execute()
+        #         print(f"Updated {len(batch_data)} records")
+        #     except Exception as e:
+        #         print(f"Error: Unable to update new records. {e}")
+        #         print(f"Batch Data: {batch_data[-1]}")
+        #         return False
             
-            if sigparser_check:  # Only update if sigparser_check is True
-                contact_exists = (
-                    self.supabase.table('contacts').select('uid').eq('uid', uid).execute().data or
-                    self.supabase.table('deleted_contacts').select('uid').eq('uid', uid).execute().data
-                )
-                
-                if contact_exists:
-                    updates.append(record)
-                else:
-                    new_records.append(record)
+        # for i in range(0, len(deleted_updates), batch_size):
+        #     batch_data = deleted_updates[i:i + batch_size]
+        #     try:
+        #         self.supabase.table('deleted_contacts').upsert(batch_data).execute()
+        #         print(f"Updated {len(batch_data)} records")
+        #     except Exception as e:
+        #         print(f"Error: Unable to update new records. {e}")
+        #         print(f"Batch Data: {batch_data[-1]}")
+        #         return False
 
-
-        # Batch update and insert
-        batch_size = 500
-        for i in range(0, len(updates), batch_size):
-            batch_data = updates[i:i + batch_size]
-            try:
-                self.supabase.table('stock_contacts').upsert(batch_data).execute()
-                print(f"Updated {len(batch_data)} records")
-            except Exception as e:
-                print(f"Error: Unable to update records. {e}")
-                return False
-
-        for i in range(0, len(new_records), batch_size):
-            batch_data = new_records[i:i + batch_size]
-            try:
-                self.supabase.table('stock_contacts').insert(batch_data).execute()
-                print(f"Inserted {len(batch_data)} records")
-            except Exception as e:
-                print(f"Error: Unable to insert records. {e}")
-                return False
+        if len(new_records) > 0:
+            for i in range(0, len(new_records), batch_size):
+                batch_data = new_records[i:i + batch_size]
+                try:
+                    self.supabase.table('contacts').upsert(batch_data).execute()
+                    print(f"Inserted {len(batch_data)} records")
+                except Exception as e:
+                    print(f"Error: Unable to insert new records. {e}")
+                    print(f"Batch Data: {batch_data[-1]}")
+                    return False
+        else:
+            print('No new records to add')
 
         print(f"Uploaded {len(json_data)} records to the database\nProcess Completed Successfully")
         os.remove(self.json_file)   
+        
+        
     # Main function to run the conversion and upload
     def run(self):
         data = self.process_csv()
