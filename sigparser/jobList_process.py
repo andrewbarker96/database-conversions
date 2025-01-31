@@ -140,3 +140,4 @@ class ProjectListConverter:
 if __name__ == "__main__":
     converter = ProjectListConverter("projectList.csv", "projectList.json", "projectList.docx")
     converter.run()
+    
